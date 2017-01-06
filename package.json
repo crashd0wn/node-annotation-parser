@@ -1,6 +1,6 @@
 {
   "name": "annotation-parser",
-  "version": "2.7.0",
+  "version": "2.7.2",
   "description": "a easy to use annotation parser",
   "main": "index.js",
   "directories": {
@@ -27,6 +27,7 @@
     "should": "^4.6.1"
   },
   "dependencies": {
-    "caller": "^1.0.0"
+    "caller": "^1.0.0",
+    "underscore": "^1.8.3"
   }
 }

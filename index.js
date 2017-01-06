@@ -1,27 +1,25 @@
 var fs = require('fs');
 var path = require('path');
-
+var _ = require('underscore');
 var caller = require('caller');
 
 
 /*   public functions   */
 
 module.exports = function getAllAnnotations(filePath, callback){
-
     var absolutePath = path.resolve(path.dirname(caller()), filePath);
-
-    fs.readFile(absolutePath, {encoding: 'utf-8'}, function(err, fileContent){
-
-        if(err) return callback(err);
-
-        try {
-            var result = getAnnotationFromFile(absolutePath, filePath, fileContent);
-        } catch (e) {
-            callback(e);
-        }
-
-        callback(null, result);
-    });
+    var fileContent = fs.readFileSync(absolutePath, {encoding: 'utf-8'});
+    try {
+        return {
+            error: null,
+            annotations: getAnnotationFromFile(absolutePath, filePath, fileContent)
+        };
+    } catch (e) {
+        return {
+            error: e,
+            annotations: undefined
+        };
+    }
 };
 
 module.exports.sync = function(filePath){
@@ -40,26 +38,40 @@ function getAnnotationFromFile(absolutePath, filePath, fileContent){
     var result = {
         module: {},
         functions: [],
+        methods: {},
+        getters: {}
     };
 
     var moduleToLoad = require(absolutePath);
 
     result.module.rawAnnotations = getRawAnnotations(fileContent, 'module');
+    result.module.rawAnnotations =  _.extend(result.module.rawAnnotations, getRawAnnotations(fileContent, 'class'));
+
     result.module.annotations = parseAnnotations(result.module.rawAnnotations);
     result.module.ref = moduleToLoad;
     result.module.name = path.basename(filePath, path.extname(filePath));
 
-
-
-    for(var name in moduleToLoad){
-        if(moduleToLoad[name] instanceof Function){
-
-            result.functions[name] = {
-                rawAnnotations: getRawAnnotations(fileContent, 'function', name),
+    var obj = new moduleToLoad();
+    var proto = Object.getPrototypeOf(obj);
+    var names = Object.getOwnPropertyNames(proto);
+    for (var i=0; i<names.length; i++) {
+        var name = names[i];
+        //for(var name in moduleToLoad.prototype){
+        if (typeof proto[name] == "function") {
+            result.methods[name] = {
+                rawAnnotations: getRawAnnotations(fileContent, 'method', name),
                 ref: moduleToLoad[name],
             };
 
-            result.functions[name].annotations = parseAnnotations(result.functions[name].rawAnnotations);
+            result.methods[name] = parseAnnotations(result.methods[name].rawAnnotations);
+        } else if (typeof proto[name] === 'undefined') {
+            // Probably a getter!
+            result.getters[name] = {
+                rawAnnotations: getRawAnnotations(fileContent, 'getter', name),
+                ref: moduleToLoad[name],
+            };
+
+            result.getters[name] = parseAnnotations(result.getters[name].rawAnnotations);
         }
     }
 
@@ -70,9 +82,11 @@ function getAnnotationFromFile(absolutePath, filePath, fileContent){
 function getRawAnnotations(fileContent, type, name){
     suffixes = ({
         function: [name + '\\s*:\\s*function\\(', '(module\\.)?exports\\.' + name + '\\s*=\\s*'],
-        module: ['module\\.exports\\s*=\\s*(:?function\\([\\S\\s]*?\\))?\\s*{']
+        getter: ['\\s*get\\s*' + name + '\\(\s*\\)\\s*{'],
+        method: ['\\s*' + name + '\\([^\\)]*\\)\\s*{'],
+        module: ['module\\.exports\\s*=\\s*(:?function\\([\\S\\s]*?\\))?\\s*{'],
+        class: ['(?:module\\.exports\\s*=\\s*)?class\\s+[a-zA-Z_]+[a-zA-Z_0-9]*\\s+']
     })[type];
-
     var regex = new RegExp('((\\/\\/.*)|(\\/\\*(?:[\\s\\S](?!\\*\\/))*?\\s*\\*\\/)|\\s)*(' + suffixes.join('|') + ')');
 
     var matches = regex.exec(fileContent);
@@ -84,7 +98,7 @@ function getRawAnnotations(fileContent, type, name){
     var match = matches[0];
 
 
-    var annotationRegex = /@(([a-zA-Z_][a-zA-Z0-9]*)\(.*\))/g;
+    var annotationRegex = /@(([a-zA-Z_][a-zA-Z0-9]*)(?:\(.*\))?)/g;
     var annotationMatches;
 
     var result = {};
@@ -108,17 +122,25 @@ function getRawAnnotations(fileContent, type, name){
 
 function parseAnnotations(rawAnnotations){
 
-    var annotationRegex = /([a-zA-Z_][a-zA-Z0-9]*)\((.*)\)/;
+    var annotationRegex = /([a-zA-Z_][a-zA-Z0-9]*)(?:\((.*)\))?/;
 
     var result = {};
 
     for(var i in rawAnnotations){
-
         result[i] = [];
-
         for(var j in rawAnnotations[i]){
             var argumentsString = annotationRegex.exec(rawAnnotations[i][j])[2];
-            result[i].push(eval('([' + argumentsString + '])'));
+            result[i][j] = eval("(" + argumentsString + ")");
+        }
+
+        if (result[i].length == 1) {
+            if (result[i][0] === undefined) {
+                result[i] = true;
+            } else {
+                result[i] = result[i][0];
+            }
+        } else if (result[i].length == 0) {
+            result[i] = true;
         }
     }
 
